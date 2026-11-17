@@ -10,7 +10,8 @@ output:
     theme: yeti
 ---
 
-`01_classification.Rmd`와 같은 자료에서 이직의도를 이진 변수 대신 원래 5점 척도(q38) 그대로 두고, 회귀 모형 8개의 예측 성능을 비교했습니다.
+- `01_classification.Rmd`와 같은 자료, 이직의도는 이진 변수 대신 원래 5점 척도(q38) 사용
+- 회귀 모형 8개의 예측 성능 비교
 
 - 필요한 파일: `raw_data.csv` (2022 공직생활실태조사), `preprocess_2022.R`
 - 만드는 파일: `data_regression.csv`
