@@ -1,0 +1,97 @@
+---
+title: "MZ세대 공무원 이직의도 예측 (2024 산조학회): 분류 모형 비교"
+author: "김진영"
+date: "2024-01-19"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: true
+    theme: yeti
+---
+
+2022 공직생활실태조사로 MZ세대 공무원의 이직의도(있음/없음)를 예측하는 분류 모형 11개를 비교한 분석입니다. 2024 한국산업및조직심리학회 동계학술대회 포스터(우수 학술 논문상)의 분석입니다.
+
+- 필요한 파일: `raw_data.csv` (2022 공직생활실태조사), `preprocess_2022.R`
+- 만드는 파일: `data_classify.csv`
+- 클래스 불균형을 줄이기 위해 교차검증의 학습 폴드 안에서 SMOTE를 적용합니다 (`themis` 패키지 필요).
+
+## 1. 준비
+
+```{r setup, message = FALSE}
+library(caret)          # 모형 학습과 교차검증
+library(caretEnsemble)  # 여러 모형을 같은 폴드로 학습(caretList)
+library(doParallel)
+library(glmnet); library(e1071); library(randomForest); library(naivebayes); library(xgboost)
+
+registerDoParallel(detectCores())
+source("preprocess_2022.R")  # preprocess_2022(): 공통 전처리
+```
+
+## 2. 자료 준비
+
+```{r}
+raw_data <- read.csv("raw_data.csv")
+data <- preprocess_2022(raw_data)
+
+# 이직의도: 1~3점 → "no", 4~5점 → "yes"
+data$y  <- ifelse(data$q38 %in% c(1, 2, 3), "no", "yes")
+table(data$q38, data$y)
+data$q38 <- NULL
+
+dim(data)
+write.csv(data, "data_classify.csv", row.names = FALSE)
+```
+
+```{r}
+set.seed(1)
+train_idx  <- createDataPartition(data$y, p = 0.75, list = FALSE)
+train_data <- data[train_idx, ]
+test_data  <- data[-train_idx, ]
+
+table(train_data$y)
+table(test_data$y)
+```
+
+## 3. 모형 학습
+
+```{r}
+set.seed(1)
+my_folds <- createFolds(train_data$y, k = 10, returnTrain = TRUE)
+
+stack_control <- trainControl(
+  method = "cv", number = 10,
+  index  = my_folds,   # 모든 모형이 같은 10겹 폴드를 쓰도록 고정
+  savePredictions = "all", classProbs = TRUE,
+  sampling = "smote",  # 학습 폴드 안에서 소수 클래스 합성
+  summaryFunction = twoClassSummary,
+  allowParallel = TRUE
+)
+
+model_list <- c("knn", "naive_bayes", "glm", "glmnet", "lda", "qda",
+                "svmLinear", "svmRadial", "svmPoly", "rf", "xgbTree")
+
+fit <- caretList(y ~ ., data = train_data,
+                 methodList = model_list,
+                 trControl  = stack_control,
+                 metric     = "ROC",
+                 preProcess = c("center", "scale"))
+
+fit                                   # 모형별 교차검증 결과
+lapply(fit, function(m) m$bestTune)   # 최적 하이퍼파라미터
+```
+
+## 4. 성능 비교
+
+```{r}
+# 평가 자료 정확도: "yes" 확률 0.5 이상이면 이직의도 있음
+test_prob_yes <- sapply(fit, function(m) predict(m, newdata = test_data, type = "prob")[, "yes"])
+test_class    <- ifelse(test_prob_yes >= 0.5, "yes", "no")
+round(sort(apply(test_class, 2, function(p) mean(p == test_data$y)), decreasing = TRUE), 4)
+
+# 교차검증 성능
+rs <- resamples(fit)
+summary(rs)
+modelCor(rs, metric = "ROC")  # 모형 간 예측 상관 (스태킹 후보 선택에 참고)
+dotplot(rs, metric = "ROC")
+```
